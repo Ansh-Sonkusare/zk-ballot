@@ -1,11 +1,23 @@
+# Dependencies
 node_modules/
+
+# Compiled Compact artifacts (regenerate with `npm run compile`)
 contracts/managed/
+
+# Local wallet / chain state (contains secrets — never commit)
 .midnight-state.json
 .midnight-wallet-state/
 midnight-level-db/
+.midnight-seed*
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Logs / OS noise
 *.log
 .DS_Store
-dist/
 
-# hello-world scaffold (kept for reference, not part of the counter deliverable)
-mn-demo/
+# Local env overrides
+.env
+.env.*

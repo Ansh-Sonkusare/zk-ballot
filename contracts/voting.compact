@@ -1,0 +1,169 @@
+pragma language_version >= 0.23.0;
+
+import CompactStandardLibrary;
+
+// ═══════════════════════════════════════════════════════════════════
+//  PRIVACY MODEL — PUBLIC vs PRIVATE
+//
+//  PUBLIC (on-chain, visible to anyone):
+//    • `organizer`       — the organizer's dapp-scoped public key
+//    • `pollName`        — the poll title
+//    • `votingState`     — REGISTRATION / OPEN / CLOSED
+//    • `registeredVoters`— dapp-scoped public keys of voters
+//    • `hashedVoteMap`   — per-voter commitments hash(rating, sk); the
+//                          rating itself stays hidden until reveal
+//    • `rating1..5`      — public tallies, incremented at reveal
+//    • `totalVotes`      — number of committed votes
+//    • `result`          — winning rating (organizer closes poll)
+//
+//  PRIVATE (witness, never on-chain):
+//    • `localSk`     — the caller's secret key; its dapp-scoped public
+//                      key is what identifies a voter on-chain
+//    • `localGetVote`— the caller's private rating in [1,5]. It is only
+//                      ever used inside ZK hashing/range checks. During
+//                      the voting phase it appears on-chain as nothing but
+//                      a commitment hash; at reveal only the tally of the
+//                      chosen rating is incremented.
+//
+//  PROVED WITHOUT REVEALING:
+//    • That a registered voter committed a rating in [1,5], without
+//      publishing which rating.
+//    • That the revealed rating matches the committed one (a voter cannot
+//      change their mind after committing) — enforced by the secret-key
+//      commitment, not by trusting the client.
+// ═══════════════════════════════════════════════════════════════════
+
+export enum VotingState { REGISTRATION, OPEN, CLOSED }
+
+export sealed ledger organizer: Bytes<32>;
+export sealed ledger pollName: Opaque<"string">;
+export ledger votingState: VotingState;
+export ledger registeredVoters: Set<Bytes<32>>;
+export ledger hashedVoteMap: Map<Bytes<32>, Bytes<32>>;
+export ledger totalVotes: Counter;
+export ledger rating1: Counter;
+export ledger rating2: Counter;
+export ledger rating3: Counter;
+export ledger rating4: Counter;
+export ledger rating5: Counter;
+export ledger result: Uint<8>;
+
+witness localSk(): Bytes<32>;
+witness localGetVote(): Uint<8>;
+
+// A dapp-scoped public key derived from the secret key. Because the key is
+// bound to this dapp's domain ("voting:pk:"), the same wallet appears with a
+// different identity in every dapp it joins — it cannot be tracked across
+// dapps.
+circuit getDappPubKey(_sk: Bytes<32>): Bytes<32> {
+  return disclose(persistentHash<Vector<2, Bytes<32>>>([pad(32, "voting:pk:"), _sk]));
+}
+
+// Commitment over (rating, sk). The secret key makes the commitment
+// impossible to brute-force even though the rating space is only 1..5.
+circuit commitWithSk(_vote: Bytes<32>, _sk: Bytes<32>): Bytes<32> {
+  return disclose(persistentHash<Vector<2, Bytes<32>>>([_vote, _sk]));
+}
+
+constructor(_pollName: Opaque<"string">) {
+  const _sk = localSk();
+  organizer = getDappPubKey(_sk);
+  pollName = disclose(_pollName);
+  votingState = VotingState.REGISTRATION;
+  result = 0;
+}
+
+// REGISTRATION phase: any caller can register their dapp-scoped key to vote.
+// One entry per public key — a wallet can register at most once.
+export circuit registerToVote(): [] {
+  const _sk = localSk();
+  const pubKey = getDappPubKey(_sk);
+  assert(votingState == VotingState.REGISTRATION, "You can only register before voting opens");
+  assert(!registeredVoters.member(pubKey), "You are already registered to vote");
+  registeredVoters.insert(pubKey);
+}
+
+// ORGANIZER only: open the ballot. Registrations close once voting opens.
+export circuit openVoting(): [] {
+  const _sk = localSk();
+  const pubKey = getDappPubKey(_sk);
+  assert(pubKey == organizer, "You are not the organizer");
+  assert(votingState == VotingState.REGISTRATION, "Voting has already opened or closed");
+  assert(!registeredVoters.isEmpty(), "There are no registered voters");
+  votingState = VotingState.OPEN;
+}
+
+// VOTER: privately commit a rating in [1,5]. The rating itself is never
+// written on-chain — only hash(rating, sk) is, so nobody (including the
+// organizer) can tell which rating was chosen during the voting phase.
+export circuit commitVote(): [] {
+  assert(votingState == VotingState.OPEN, "Voting is not open");
+  const _sk = localSk();
+  const pubKey = getDappPubKey(_sk);
+  assert(registeredVoters.member(pubKey), "You are not registered to vote");
+  assert(!hashedVoteMap.member(pubKey), "You have already voted");
+  const vote = localGetVote();
+  assert(vote >= 1, "Rating must be at least 1");
+  assert(vote <= 5, "Rating must be at most 5");
+  const hash = commitWithSk(vote as Field as Bytes<32>, _sk);
+  hashedVoteMap.insert(pubKey, hash);
+  totalVotes.increment(1);
+}
+
+// ORGANIZER only: close the ballot so committed votes can be revealed.
+export circuit closeVoting(): [] {
+  const _sk = localSk();
+  const pubKey = getDappPubKey(_sk);
+  assert(pubKey == organizer, "You are not the organizer");
+  assert(votingState == VotingState.OPEN, "Voting is not open");
+  assert(!hashedVoteMap.isEmpty(), "Nobody has voted yet");
+  votingState = VotingState.CLOSED;
+}
+
+// VOTER: reveal the committed rating. The recomputed hash must equal the
+// committed one — a voter cannot change their rating after committing. Only
+// the tally of the chosen rating is incremented; the vote itself is never
+// stored on-chain.
+export circuit revealVote(): [] {
+  assert(votingState == VotingState.CLOSED, "Voting has not closed yet");
+  const _sk = localSk();
+  const pubKey = getDappPubKey(_sk);
+  assert(registeredVoters.member(pubKey), "You are not a registered voter");
+  assert(hashedVoteMap.member(pubKey), "You have not voted yet");
+  const vote = localGetVote();
+  assert(vote >= 1, "Rating must be at least 1");
+  assert(vote <= 5, "Rating must be at most 5");
+  const hash = commitWithSk(vote as Field as Bytes<32>, _sk);
+  assert(hashedVoteMap.lookup(pubKey) == hash, "Rating does not match your committed vote");
+  if (disclose(vote) == 1) {
+    rating1.increment(1);
+  } else if (disclose(vote) == 2) {
+    rating2.increment(1);
+  } else if (disclose(vote) == 3) {
+    rating3.increment(1);
+  } else if (disclose(vote) == 4) {
+    rating4.increment(1);
+  } else {
+    rating5.increment(1);
+  }
+}
+
+// ORGANIZER only: compute the winning rating. Ties resolve to the lower
+// rating so the outcome is deterministic.
+export circuit checkResults(): [] {
+  const _sk = localSk();
+  const pubKey = getDappPubKey(_sk);
+  assert(pubKey == organizer, "You are not the organizer");
+  assert(votingState == VotingState.CLOSED, "Voting is still open");
+  if (rating1 >= rating2 && rating1 >= rating3 && rating1 >= rating4 && rating1 >= rating5) {
+    result = disclose(1);
+  } else if (rating2 >= rating3 && rating2 >= rating4 && rating2 >= rating5) {
+    result = disclose(2);
+  } else if (rating3 >= rating4 && rating3 >= rating5) {
+    result = disclose(3);
+  } else if (rating4 >= rating5) {
+    result = disclose(4);
+  } else {
+    result = disclose(5);
+  }
+}

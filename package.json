@@ -1,11 +1,11 @@
 {
-  "name": "midnight-counter",
+  "name": "midnight-private-voting",
   "version": "1.0.0",
   "type": "module",
-  "description": "A privacy-preserving counter smart contract for the Midnight network",
+  "description": "A privacy-preserving voting smart contract for the Midnight network",
   "license": "MIT",
   "scripts": {
-    "compile": "compact compile contracts/counter.compact contracts/managed/counter",
+    "compile": "compact compile contracts/voting.compact contracts/managed/voting",
     "build": "npx tsc --noEmit",
     "test": "npm run compile && vitest run",
     "test:only": "vitest run",
@@ -41,5 +41,5 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "keywords": ["midnight", "blockchain", "zero-knowledge", "privacy", "counter"]
+  "keywords": ["midnight", "blockchain", "zero-knowledge", "privacy", "voting"]
 }

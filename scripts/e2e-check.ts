@@ -1,9 +1,14 @@
 /**
- * End-to-end check for the counter contract.
+ * End-to-end check for the voting contract.
  *
- * Reconnects to the deployed counter contract, reads its ledger state,
- * performs an increment (write path), and verifies the total changed by the
- * secret amount. Exits 0 on success. Used by `npm run test:e2e`.
+ * Reconnects to the deployed voting contract and walks the complete poll
+ * lifecycle on-chain, verifying the ledger at every step:
+ *
+ *   register → open → commit (private rating) → close → reveal → results
+ *
+ * The rating is a private witness: only its commitment appears on-chain
+ * during the voting phase, and only the final per-rating tally appears after
+ * reveal. Exits 0 on success. Used by `npm run test:e2e`.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -17,16 +22,17 @@ import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-pri
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { resolveNetwork, getOrCreateSeed, getDeployment } from '../src/network';
 import { createWallet, persistWalletState } from '../src/wallet';
+import { createPrivateState, witnesses, type VotingPrivateState } from '../src/voting';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 
 // @ts-expect-error wallet sync requires WebSocket
 globalThis.WebSocket = WebSocket;
 
-// Must match the privateStateId used at deploy time (witness-free → empty state).
-const PRIVATE_STATE_ID = 'counterPrivateState';
+// Must match the privateStateId used at deploy time.
+const PRIVATE_STATE_ID = 'votingPrivateState';
 
-// Must match MAX_DELTA in the contract.
-const MAX_DELTA = 10n;
+// The rating exercised by the e2e flow.
+const RATING = 5n;
 
 // ─── Network configuration ─────────────────────────────────────────────────────
 
@@ -55,14 +61,16 @@ async function main() {
 
   // 2. Build wallet and providers
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'counter');
+  const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'voting');
   const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
   if (!fs.existsSync(contractPath)) fail('Compiled contract missing — run `npm run compile`.');
-  const Counter = await import(pathToFileURL(contractPath).href);
-  const compiledContract = CompiledContract.make('counter', Counter.Contract).pipe(
-    CompiledContract.withVacantWitnesses,
-    CompiledContract.withCompiledFileAssets(zkConfigPath),
-  );
+  const Voting = await import(pathToFileURL(contractPath).href);
+const compiledContract = CompiledContract.make('voting', Voting.Contract).pipe(
+  // The witnesses are structurally correct; cast only bridges the SDK's
+  // (currently un-inferrable) conditional type in TS 6.
+  CompiledContract.withWitnesses(witnesses as never),
+  CompiledContract.withCompiledFileAssets(zkConfigPath),
+);
 
   const walletCtx = await createWallet({ network, networkConfig, seed: SEED });
   await walletCtx.wallet.waitForSyncedState();
@@ -85,7 +93,7 @@ async function main() {
 
   const providers = {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'counter-state',
+      privateStateStoreName: 'voting-state',
       accountId: walletCtx.unshieldedKeystore.getBech32Address().toString(),
       privateStoragePasswordProvider: () => 'Local-Devnet-Development-Placeholder-1',
     }),
@@ -106,65 +114,94 @@ async function main() {
     deployed = await findDeployedContract(providers, {
       contractAddress: deployment.address,
       compiledContract: compiledContract as any,
+      // No initialPrivateState here: findDeployedContract would overwrite the
+      // stored private state. Omitting it reconnects to the organizer's sk
+      // written at deploy time (deploy must run first).
       privateStateId: PRIVATE_STATE_ID,
-      initialPrivateState: {},
     });
   } catch (err: any) {
     await walletCtx.wallet.stop();
     fail(`findDeployedContract threw: ${err?.message ?? err}`);
   }
 
-  // 4. Read the current on-chain ledger state
-  const beforeState = await providers.publicDataProvider.queryContractState(deployment.address);
-  if (!beforeState) {
-    await walletCtx.wallet.stop();
-    fail(`queryContractState returned null for ${deployment.address}`);
-  }
-  const beforeLedger = Counter.ledger(beforeState.data);
-  const beforeTotal = beforeLedger.total;
-  console.log(`📋 Total before increment: ${beforeTotal.toString()}`);
-  console.log(`   Last note before: "${beforeLedger.lastNote}"`);
+  const readLedger = async () => {
+    const cs = await providers.publicDataProvider.queryContractState(deployment.address);
+    if (!cs) fail(`queryContractState returned null for ${deployment.address}`);
+    return Voting.ledger(cs.data);
+  };
 
-  // 5. Perform an increment (write path). The secret delta is a private
-  // witness: it is never written to the ledger, only its range is proved.
-  const delta = 7n;
-  const note = `e2e-check-${Date.now()}`;
-  console.log(`\n🚀 Incrementing by secret amount ${delta}...`);
-  try {
-    const tx = await deployed.callTx.increment(delta, note);
-    console.log(`   txId: ${tx.public.txId}`);
-    console.log(`   blockHeight: ${tx.public.blockHeight}`);
-  } catch (err: any) {
+  // 4. Initial state
+  const initial = await readLedger();
+  console.log(`📋 Poll: "${initial.pollName}"`);
+  console.log(`📋 Phase: ${Voting.VotingState[initial.votingState]}`);
+  if (initial.votingState !== Voting.VotingState.REGISTRATION) {
     await walletCtx.wallet.stop();
-    fail(`increment threw: ${err?.message ?? err}`);
+    fail(`expected REGISTRATION phase, got ${Voting.VotingState[initial.votingState]} (re-run on a fresh deploy)`);
   }
 
-  // 6. Read state again and verify the public total grew by exactly delta —
-  // while the ledger exposes only total+note (the secret stays off-chain).
-  const afterState = await providers.publicDataProvider.queryContractState(deployment.address);
-  if (!afterState) {
-    await walletCtx.wallet.stop();
-    fail(`queryContractState (after) returned null`);
-  }
-  const afterLedger = Counter.ledger(afterState.data);
-  const afterTotal = afterLedger.total;
-  console.log(`📋 Total after increment: ${afterTotal.toString()}`);
-  console.log(`   Last note after: "${afterLedger.lastNote}"`);
+  // 5. Register + open
+  console.log('\n🚀 Registering to vote...');
+  let tx = await deployed.callTx.registerToVote();
+  console.log(`   txId: ${tx.public.txId} @ block ${tx.public.blockHeight}`);
+  let ledger = await readLedger();
+  if (ledger.registeredVoters.size() !== 1n) fail(`expected 1 registered voter, got ${ledger.registeredVoters.size()}`);
 
-  const expected = beforeTotal + delta;
-  if (afterTotal !== expected) {
-    await walletCtx.wallet.stop();
-    fail(`total mismatch: expected ${expected}, got ${afterTotal}`);
+  console.log('🚀 Opening voting...');
+  tx = await deployed.callTx.openVoting();
+  console.log(`   txId: ${tx.public.txId} @ block ${tx.public.blockHeight}`);
+  ledger = await readLedger();
+  if (ledger.votingState !== Voting.VotingState.OPEN) fail(`expected OPEN phase`);
+
+  // 6. Commit a private rating. The rating is stored in the wallet's private
+  // state and consumed as a witness by the circuit — the ledger only records
+  // the commitment hash(rating, sk), never the rating itself.
+  console.log(`\n🚀 Committing private rating ${RATING}...`);
+  const privateState = (await providers.privateStateProvider.get(PRIVATE_STATE_ID)) as VotingPrivateState | null;
+  await providers.privateStateProvider.set(PRIVATE_STATE_ID, {
+    sk: privateState?.sk ?? createPrivateState().sk,
+    vote: RATING,
+  });
+  tx = await deployed.callTx.commitVote();
+  console.log(`   txId: ${tx.public.txId} @ block ${tx.public.blockHeight}`);
+  ledger = await readLedger();
+  if (ledger.totalVotes !== 1n) fail(`expected totalVotes=1, got ${ledger.totalVotes}`);
+  if (ledger.hashedVoteMap.size() !== 1n) fail(`expected 1 committed hash`);
+  // Privacy check: the rating must NOT be visible in any tally yet.
+  for (const key of ['rating1', 'rating2', 'rating3', 'rating4', 'rating5'] as const) {
+    if (ledger[key] !== 0n) fail(`tally ${key} moved during commit (leak)`);
   }
-  if (afterLedger.lastNote !== note) {
-    await walletCtx.wallet.stop();
-    fail(`note mismatch: expected "${note}", got "${afterLedger.lastNote}"`);
+  console.log('   ✓ Rating stays hidden: all tallies are 0 after commit; only the commitment is on-chain.');
+
+  // 7. Close + reveal
+  console.log('🚀 Closing voting...');
+  tx = await deployed.callTx.closeVoting();
+  console.log(`   txId: ${tx.public.txId} @ block ${tx.public.blockHeight}`);
+  ledger = await readLedger();
+  if (ledger.votingState !== Voting.VotingState.CLOSED) fail(`expected CLOSED phase`);
+
+  console.log(`🚀 Revealing vote (rating ${RATING})...`);
+  tx = await deployed.callTx.revealVote();
+  console.log(`   txId: ${tx.public.txId} @ block ${tx.public.blockHeight}`);
+  ledger = await readLedger();
+  if (ledger.rating5 !== 1n) fail(`expected rating5=1 after reveal, got ${ledger.rating5}`);
+  for (const key of ['rating1', 'rating2', 'rating3', 'rating4'] as const) {
+    if (ledger[key] !== 0n) fail(`unexpected ${key}=${ledger[key]}`);
   }
+
+  // 8. Results
+  console.log('🚀 Computing results...');
+  tx = await deployed.callTx.checkResults();
+  console.log(`   txId: ${tx.public.txId} @ block ${tx.public.blockHeight}`);
+  ledger = await readLedger();
+  if (ledger.result !== RATING) fail(`expected result=${RATING}, got ${ledger.result}`);
 
   console.log(`\n✅ e2e-check passed`);
   console.log(`   contractAddress: ${deployment.address}`);
   console.log(`   network:         ${network}`);
-  console.log(`   delta kept private: yes (only total+note are on-chain)`);
+  console.log(`   poll:            "${ledger.pollName}"`);
+  console.log(`   tallies:         1★=${ledger.rating1} 2★=${ledger.rating2} 3★=${ledger.rating3} 4★=${ledger.rating4} 5★=${ledger.rating5}`);
+  console.log(`   winner:          ${ledger.result}`);
+  console.log(`   rating kept private during voting: yes (commitments only)`);
 
   await walletCtx.wallet.stop();
   process.exit(0);

@@ -15,6 +15,6 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["contracts", "src", "tests"],
+  "include": ["contracts", "src", "tests", "scripts"],
   "exclude": ["node_modules", "dist", "mn-demo"]
 }

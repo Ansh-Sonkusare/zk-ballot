@@ -1,5 +1,11 @@
 /**
- * CLI for interacting with the counter contract.
+ * CLI for interacting with the voting contract.
+ *
+ * Walks the full poll lifecycle as the organizer wallet:
+ *   register → open → commit (private rating) → close → reveal → results.
+ * The rating is a private witness: it is written to the wallet's private
+ * state, never to the ledger. On-chain you only ever see the commitment hash
+ * during voting and the per-rating tallies after reveal.
  */
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
@@ -17,6 +23,7 @@ import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-pri
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { resolveNetwork, getOrCreateSeed, getDeployment } from './network';
 import { createWallet, persistWalletState, unshieldedToken, type WalletContext } from './wallet';
+import { createPrivateState, witnesses, type VotingPrivateState } from './voting';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 
 // Enable WebSocket for GraphQL subscriptions
@@ -24,17 +31,14 @@ import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-j
 globalThis.WebSocket = WebSocket;
 
 // Must match the privateStateId used at deploy time so the CLI reconnects to
-// the same private state. The counter contract has no witnesses (empty state).
-const PRIVATE_STATE_ID = 'counterPrivateState';
-
-// The range of secret amounts the counter accepts (must match MAX_DELTA).
-const MAX_DELTA = 10n;
+// the same private state (the voter's sk + pending rating).
+const PRIVATE_STATE_ID = 'votingPrivateState';
 
 const { network, config: networkConfig } = resolveNetwork();
 const SEED = getOrCreateSeed(network);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'counter');
+const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'voting');
 
 // Load compiled contract
 const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
@@ -45,10 +49,12 @@ if (!fs.existsSync(contractPath)) {
   process.exit(1);
 }
 
-const Counter = await import(pathToFileURL(contractPath).href);
+const Voting = await import(pathToFileURL(contractPath).href);
 
-const compiledContract = CompiledContract.make('counter', Counter.Contract).pipe(
-  CompiledContract.withVacantWitnesses,
+const compiledContract = CompiledContract.make('voting', Voting.Contract).pipe(
+  // The witnesses are structurally correct; cast only bridges the SDK's
+  // (currently un-inferrable) conditional type in TS 6.
+  CompiledContract.withWitnesses(witnesses as never),
   CompiledContract.withCompiledFileAssets(zkConfigPath),
 );
 
@@ -77,7 +83,7 @@ async function createProviders(walletCtx: WalletContext) {
 
   return {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'counter-state',
+      privateStateStoreName: 'voting-state',
       accountId,
       privateStoragePasswordProvider: () => privateStatePassword,
     }),
@@ -93,11 +99,32 @@ async function createProviders(walletCtx: WalletContext) {
   };
 }
 
+// ─── Private-state helpers ─────────────────────────────────────────────────────
+
+// Store a pending private rating so commitVote()'s localGetVote() witness
+// reads it. The value lives only in the encrypted level DB on this machine.
+async function setPendingRating(providers: any, rating: bigint): Promise<void> {
+  const current = (await providers.privateStateProvider.get(PRIVATE_STATE_ID)) as VotingPrivateState | null;
+  await providers.privateStateProvider.set(PRIVATE_STATE_ID, { sk: current?.sk ?? createPrivateState().sk, vote: rating });
+}
+
+function renderState(ledgerState: any): string {
+  const rating = (i: number) => (ledgerState[`rating${i}`] ?? 0n).toString();
+  return [
+    `  📋 Poll: "${ledgerState.pollName}"`,
+    `  📋 Phase: ${Voting.VotingState[ledgerState.votingState] ?? ledgerState.votingState}`,
+    `  📋 Registered voters: ${ledgerState.registeredVoters.size().toString()}`,
+    `  📋 Votes committed: ${ledgerState.totalVotes.toString()}`,
+    `  📊 Tallies: 1★=${rating(1)}  2★=${rating(2)}  3★=${rating(3)}  4★=${rating(4)}  5★=${rating(5)}`,
+    ledgerState.result > 0n ? `  🏆 Winning rating: ${ledgerState.result.toString()}` : '  🏆 Result: not computed yet',
+  ].join('\n');
+}
+
 // ─── Main CLI ──────────────────────────────────────────────────────────────────
 
 async function main() {
   console.log('\n╔══════════════════════════════════════════════════════════════╗');
-  console.log('║                      Counter CLI                            ║');
+  console.log('║                    Voting CLI                                ║');
   console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
   const rl = createInterface({ input: stdin, output: stdout });
@@ -145,8 +172,10 @@ async function main() {
     const deployed: any = await findDeployedContract(providers, {
       compiledContract: compiledContract as any,
       contractAddress: deployment.address,
+      // No initialPrivateState here: findDeployedContract would overwrite the
+      // stored private state. Omitting it reconnects to the organizer's sk
+      // written at deploy time (deploy must run first).
       privateStateId: PRIVATE_STATE_ID,
-      initialPrivateState: {},
     });
 
     console.log('  ✅ Connected!\n');
@@ -155,26 +184,24 @@ async function main() {
     let running = true;
     while (running) {
       console.log('─── Menu ───────────────────────────────────────────────────────');
-      console.log('  1. Increment counter (secret amount 1-10)');
-      console.log('  2. Read current total');
-      console.log('  3. Check wallet balance');
-      console.log('  4. Exit\n');
+      console.log('  1. Register to vote');
+      console.log('  2. Open voting (organizer)');
+      console.log('  3. Commit my private rating (1-5)');
+      console.log('  4. Close voting (organizer)');
+      console.log('  5. Reveal my vote');
+      console.log('  6. Compute results (organizer)');
+      console.log('  7. View poll state');
+      console.log('  8. Check wallet balance');
+      console.log('  9. Exit\n');
 
       const choice = await rl.question('  Your choice: ');
 
       switch (choice.trim()) {
         case '1': {
-          const deltaRaw = await rl.question(`  Enter secret amount (1-${MAX_DELTA}): `);
-          const delta = BigInt(deltaRaw.trim());
-          if (delta < 1n || delta > MAX_DELTA) {
-            console.log(`\n  ❌ Amount must be between 1 and ${MAX_DELTA}.\n`);
-            break;
-          }
-          const note = await rl.question('  Optional public note (empty for none): ');
           console.log('\n  Submitting transaction (this may take 30-60 seconds)...');
           try {
-            const tx = await deployed.callTx.increment(delta, note);
-            console.log(`\n  ✅ Total incremented by ${delta} (secret amount hidden).`);
+            const tx = await deployed.callTx.registerToVote();
+            console.log('\n  ✅ Registered to vote.');
             console.log(`  Transaction ID: ${tx.public.txId}`);
             console.log(`  Block height: ${tx.public.blockHeight}\n`);
           } catch (error) {
@@ -184,15 +211,88 @@ async function main() {
         }
 
         case '2': {
-          console.log('\n  Reading total from blockchain...');
+          console.log('\n  Submitting transaction (this may take 30-60 seconds)...');
+          try {
+            const tx = await deployed.callTx.openVoting();
+            console.log('\n  ✅ Voting is now OPEN.');
+            console.log(`  Transaction ID: ${tx.public.txId}`);
+            console.log(`  Block height: ${tx.public.blockHeight}\n`);
+          } catch (error) {
+            console.error('\n  ❌ Failed:', error instanceof Error ? error.message : error);
+          }
+          break;
+        }
+
+        case '3': {
+          const ratingRaw = await rl.question('  Enter your private rating (1-5): ');
+          const rating = BigInt(ratingRaw.trim());
+          if (rating < 1n || rating > 5n) {
+            console.log('\n  ❌ Rating must be between 1 and 5.\n');
+            break;
+          }
+          // The rating is a private witness: it is stored in the wallet's
+          // private state and only used inside the ZK circuit. It is never
+          // written to the ledger — on-chain all that appears is the
+          // commitment hash(rating, sk).
+          await setPendingRating(providers, rating);
+          console.log(`\n  Committing rating ${rating}... (this may take 30-60 seconds)`);
+          console.log('  ℹ  The rating itself stays private; only its commitment goes on-chain.');
+          try {
+            const tx = await deployed.callTx.commitVote();
+            console.log('\n  ✅ Vote committed privately.');
+            console.log(`  Transaction ID: ${tx.public.txId}`);
+            console.log(`  Block height: ${tx.public.blockHeight}\n`);
+          } catch (error) {
+            console.error('\n  ❌ Failed:', error instanceof Error ? error.message : error);
+          }
+          break;
+        }
+
+        case '4': {
+          console.log('\n  Submitting transaction (this may take 30-60 seconds)...');
+          try {
+            const tx = await deployed.callTx.closeVoting();
+            console.log('\n  ✅ Voting is now CLOSED.');
+            console.log(`  Transaction ID: ${tx.public.txId}`);
+            console.log(`  Block height: ${tx.public.blockHeight}\n`);
+          } catch (error) {
+            console.error('\n  ❌ Failed:', error instanceof Error ? error.message : error);
+          }
+          break;
+        }
+
+        case '5': {
+          console.log('\n  Submitting transaction (this may take 30-60 seconds)...');
+          try {
+            const tx = await deployed.callTx.revealVote();
+            console.log('\n  ✅ Vote revealed; tally updated.');
+            console.log(`  Transaction ID: ${tx.public.txId}`);
+            console.log(`  Block height: ${tx.public.blockHeight}\n`);
+          } catch (error) {
+            console.error('\n  ❌ Failed:', error instanceof Error ? error.message : error);
+          }
+          break;
+        }
+
+        case '6': {
+          console.log('\n  Submitting transaction (this may take 30-60 seconds)...');
+          try {
+            const tx = await deployed.callTx.checkResults();
+            console.log('\n  ✅ Results computed.');
+            console.log(`  Transaction ID: ${tx.public.txId}`);
+            console.log(`  Block height: ${tx.public.blockHeight}\n`);
+          } catch (error) {
+            console.error('\n  ❌ Failed:', error instanceof Error ? error.message : error);
+          }
+          break;
+        }
+
+        case '7': {
+          console.log('\n  Reading poll state from blockchain...');
           try {
             const contractState = await providers.publicDataProvider.queryContractState(deployment.address);
             if (contractState) {
-              const ledgerState = Counter.ledger(contractState.data);
-              const total = ledgerState.total;
-              const lastNote = ledgerState.lastNote ?? '';
-              console.log(`\n  📋 Current total: ${total.toString()}`);
-              console.log(`  📋 Last note: "${lastNote}"\n`);
+              console.log(`\n${renderState(Voting.ledger(contractState.data))}\n`);
             } else {
               console.log('\n  📋 No contract state found (contract may not be initialized yet)\n');
             }
@@ -202,7 +302,7 @@ async function main() {
           break;
         }
 
-        case '3': {
+        case '8': {
           console.log('\n  Checking balance...');
           const currentState = await walletCtx.wallet.waitForSyncedState();
           const currentBalance = currentState.unshielded.balances[unshieldedToken().raw] ?? 0n;
@@ -212,20 +312,25 @@ async function main() {
           break;
         }
 
-        case '4':
+        case '9':
           running = false;
           console.log('\n  👋 Goodbye!\n');
           break;
 
         default:
-          console.log('\n  ❌ Invalid choice. Please enter 1-4.\n');
+          console.log('\n  ❌ Invalid choice. Please enter 1-9.\n');
       }
     }
 
     await persistWalletState(network, walletCtx);
     await walletCtx.wallet.stop();
   } catch (error) {
-    console.error('\n❌ Error:', error instanceof Error ? error.message : error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`\n❌ Error: ${message}`);
+    if (message.includes('No private state found at private state ID')) {
+      console.error('   This wallet has no private state for the voting contract.');
+      console.error('   Run `npm run deploy -- --network <network>` first (or `npm run clean` then deploy).');
+    }
   } finally {
     rl.close();
   }
