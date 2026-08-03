@@ -1,0 +1,11 @@
+node_modules/
+contracts/managed/
+.midnight-state.json
+.midnight-wallet-state/
+midnight-level-db/
+*.log
+.DS_Store
+dist/
+
+# hello-world scaffold (kept for reference, not part of the counter deliverable)
+mn-demo/
