@@ -1,6 +1,12 @@
 # Midnight Private Voting
 
+![CI](https://github.com/Ansh-Sonkusare/midnight/actions/workflows/ci.yml/badge.svg)
+
 > A privacy-preserving voting smart contract on the Midnight network where registered voters rate a poll from 1 to 5 in secret. Ratings are committed as hidden hashes, votes are tallied in zero-knowledge, and the per-rating tally (and winner) is only revealed after the poll closes.
+
+## Live Demo
+
+[PLACEHOLDER — add Vercel/Netlify URL after deploying frontend]
 
 ## Contract Address
 
@@ -39,10 +45,25 @@ The twist is the *rating itself* is a private witness. During voting, the only t
   - During **commit**: that the hidden rating is in `[1, 5]` and that `hashedVoteMap[voterKey] = hash(rating, sk)` — a correct commitment, without disclosing the rating.
   - During **reveal**: that `hash(rating, sk)` equals the stored commitment, so the voter cannot change their mind after committing. The proof attests to the arithmetic; the raw rating and key stay on the prover's machine.
 
+## Privacy Claim
+
+An on-chain observer can see:
+- That a wallet registered to vote (via its dapp-scoped public key)
+- That a commitment `hash(rating, sk)` was stored for that voter
+- Final per-rating tallies (after reveal)
+
+An on-chain observer **cannot** see:
+- The actual rating chosen (until the voter reveals it, and even then only the tally increments — not which voter chose which rating)
+- The voter's raw secret key
+- Any correlation between voter identity and specific rating across polls
+
 ## Tech Stack
 
 - **Midnight network** — zero-knowledge smart contract platform
 - **Compact language** — Midnight's smart contract language (compiler 0.5.1, language version ≥ 0.23.0, 6 circuits)
+- **Midnight.js SDK** — `@midnight-ntwrk/*` packages v4.1.1
+- **React 18 + Vite** — frontend build
+- **Lace wallet** — browser wallet for Midnight (handles ZK proof generation)
 - **Node.js v22+** — runtime for tooling and tests
 - **Vitest** — circuit + ledger test suite
 - **Docker** — runs the local proof server on port 6300
@@ -51,6 +72,7 @@ The twist is the *rating itself* is a private witness. During voting, the only t
 
 - Node.js v22 or newer
 - Docker (with a running daemon)
+- Lace wallet browser extension (for the frontend)
 - The Compact toolchain — install with:
   ```bash
   curl --proto '=https' --tlsv1.2 -LsSf \
@@ -58,12 +80,12 @@ The twist is the *rating itself* is a private witness. During voting, the only t
   export PATH="$HOME/.local/bin:$PATH"
   compact update
   ```
-- The proof server image (pin 8.1.0 — the `latest` tag resolves to 7.0.0-rc.1, which hangs in proof generation on Apple Silicon):
+- The proof server image (pin 8.1.0):
   ```bash
   docker run -d --name midnight-proof-server -p 6300:6300 midnightntwrk/proof-server:8.1.0
   ```
 
-## Setup
+## Setup & Run Locally
 
 ```bash
 # 1. Install dependencies
@@ -72,22 +94,18 @@ npm install
 # 2. Compile the Compact contract into circuits + keys
 npm run compile
 
-# 3. Run the tests (compiles, then runs vitest)
+# 3. Run the tests
 npm test
 
-# 4. Deploy to the Preview network
+# 4. Start the frontend dev server
+npm run dev
+# → opens http://localhost:5173
+
+# 5. (Optional) Deploy to the Preview network
 NODE_OPTIONS="--max-old-space-size=12288" npm run deploy -- --network preview
-#     The script prints a wallet address — fund it at the Preview faucet,
-#     wait for funding, and the deployment proceeds automatically.
 
-# 5. Interact with the deployed contract (interactive menu)
+# 6. (Optional) Run the interactive CLI
 npm run cli
-
-# 6. Run the on-chain end-to-end check (full poll lifecycle)
-NODE_OPTIONS="--max-old-space-size=12288" npm run test:e2e
-
-# 7. Switch networks
-npm run network preview   # or preprod
 ```
 
 ## Run Tests
@@ -96,25 +114,34 @@ npm run network preview   # or preprod
 npm test
 ```
 
-This compiles the contract and runs the Vitest suite in `tests/voting.test.ts`, covering registration rules, phase enforcement, private-commit correctness, rating bounds, double-vote prevention, commit–reveal consistency, tallies, and the winner computation.
+This compiles the contract and runs the Vitest suite in `tests/voting.test.ts`, covering 13 scenarios:
+- Registration rules (once per voter, registration-phase only)
+- Phase enforcement (open/close ordering)
+- Private-commit correctness (tallies stay zero until reveal)
+- Rating bounds (rejects 0 and 6)
+- Double-vote prevention
+- Commit–reveal consistency (cannot change rating after committing)
+- Tallies and winner computation (ties resolve lower)
+- Unregistered voter rejection
 
-## End-to-End Check
+## CI/CD
 
-```bash
-NODE_OPTIONS="--max-old-space-size=12288" npm run test:e2e
-```
+On every push to `main` and every pull request, GitHub Actions:
+1. Checks out the code
+2. Sets up Node.js v22
+3. Installs the Compact compiler
+4. Runs `npm run compile` to compile the contract
+5. Runs `npm run test:only` (Vitest suite, no re-compilation needed)
 
-`scripts/e2e-check.ts` reconnects to the deployed contract and walks the entire poll lifecycle on-chain — register → open → commit → close → reveal → results — asserting at each step. It also verifies the privacy property: after committing a rating, every public tally is still `0` (only the commitment hash is visible), and only after reveal does the matching tally increment.
+See `.github/workflows/ci.yml`.
 
-> Note: the e2e check requires a fresh deploy (the poll must be in the `REGISTRATION` phase). Run `npm run deploy -- --network preview` before `npm run test:e2e`.
+## Product Proposal
 
-## Interactive CLI
+See `PROPOSAL.md` — fill in the "What is the product", "Why Midnight", and "Mainnet Feasibility" sections manually.
 
-```bash
-npm run cli
-```
+## Demo Video
 
-Presents a menu to run each step of the poll. Ratings are entered privately; the CLI stores them in the wallet's encrypted private state and they never appear on-chain before reveal.
+[PLACEHOLDER — add link after recording the 2-minute demo]
 
 ## Initial Idea
 
@@ -128,11 +155,7 @@ The key design decisions:
 - **Registered-voter gating (the official Election Contract pattern)** — a dapp-scoped public key per voter, one entry in `registeredVoters`, no ballot coins. This replaces an earlier idea of minting a ballot NFT to gate voting; research showed that wiring a voter-held coin through the circuit needs SDK-level transient handling that isn't exposed in a documented example, so the registered-voter approach is both simpler and the pattern Midnight's own election example uses.
 - **Organizer-only transitions** — open, close, and results are restricted to the organizer's dapp-scoped key, so a poll can't be tampered with mid-flow.
 
-The poll lifecycle mirrors how a real secret ballot runs: registration → open → commit → close → reveal → results.
-
 ## Screenshots
-
-Below are the key terminal outputs from the build and deployment. I'll replace these with captured screenshots:
 
 **1. Compact contract compilation (6 circuits built)**
 
@@ -153,19 +176,11 @@ $ NODE_OPTIONS="--max-old-space-size=12288" npm run deploy -- --network preview
   Saved to .midnight-state.json
 ```
 
-**3. On-chain e2e check (full poll lifecycle, privacy verified)**
+**3. Tests passing (13/13)**
 
 ```text
-$ npm run test:e2e
-📋 Poll: "Midnight Private Ratings Poll"
-📋 Phase: REGISTRATION
-🚀 Registering to vote...        ✅
-🚀 Opening voting...             ✅
-🚀 Committing private rating 5...   ✅
-   ✓ Rating stays hidden: all tallies are 0 after commit; only the commitment is on-chain.
-🚀 Closing voting...             ✅
-🚀 Revealing vote (rating 5)...  ✅
-🚀 Computing results...          ✅
-   tallies: 1★=0 2★=0 3★=0 4★=0 5★=1
-   winner: 5
+$ npm run test:only
+ ✓ tests/voting.test.ts (13 tests) 444ms
+ Test Files  1 passed (1)
+      Tests  13 passed (13)
 ```
