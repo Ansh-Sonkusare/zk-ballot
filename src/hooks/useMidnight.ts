@@ -37,9 +37,8 @@ export function useMidnight(): UseMidnightReturn {
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isLaceInstalled, setIsLaceInstalled] = useState(Boolean(window.midnight?.mnLace));
   const apiRef = useRef<LaceAPI | null>(null);
-
-  const isLaceInstalled = Boolean(window.midnight?.mnLace);
 
   const connect = useCallback(async () => {
     const lace = window.midnight?.mnLace;
@@ -74,6 +73,21 @@ export function useMidnight(): UseMidnightReturn {
     setError(null);
   }, []);
 
+  // Extensions inject into window asynchronously; poll until Lace appears or timeout.
+  useEffect(() => {
+    if (window.midnight?.mnLace) return;
+    let attempts = 0;
+    const id = setInterval(() => {
+      if (window.midnight?.mnLace) {
+        setIsLaceInstalled(true);
+        clearInterval(id);
+      } else if (++attempts >= 20) {
+        clearInterval(id);
+      }
+    }, 250);
+    return () => clearInterval(id);
+  }, []);
+
   // Auto-reconnect if already enabled
   useEffect(() => {
     const lace = window.midnight?.mnLace;
@@ -84,7 +98,7 @@ export function useMidnight(): UseMidnightReturn {
     }).catch(() => {
       // silently ignore — wallet may not be ready yet
     });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isLaceInstalled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { address, networkError, error, isConnecting, isLaceInstalled, connect, disconnect };
 }
