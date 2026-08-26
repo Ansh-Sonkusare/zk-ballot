@@ -1,4 +1,4 @@
-import { Wallet, Circle, Lock, Zap, LogOut, Radio, ExternalLink } from 'lucide-react';
+import { Wallet, Lock, Zap, LogOut, Radio, ExternalLink } from 'lucide-react';
 import type { UseMidnightReturn } from '../hooks/useMidnight';
 
 function truncateAddress(addr: string): string {
@@ -32,7 +32,7 @@ export function WalletConnect({
 
       {address ? (
         <div className="wallet-connected">
-          <Circle size={8} fill="var(--success)" color="var(--success)" />
+          <span className="wallet-dot" />
           <span className="wallet-address">{truncateAddress(address)}</span>
 
           <span className="wallet-badge">
@@ -40,19 +40,21 @@ export function WalletConnect({
             Preview
           </span>
 
-          {tNight !== null && (
-            <span className="wallet-badge">
-              <Lock size={10} style={{ verticalAlign: 'middle', marginRight: 3 }} />
-              {formatTNight(tNight)} tNIGHT
-            </span>
-          )}
+          <div className="balance-pills">
+            {tNight !== null && (
+              <span className="balance-pill">
+                <Lock size={10} style={{ verticalAlign: 'middle', marginRight: 3 }} />
+                {formatTNight(tNight)} tNIGHT
+              </span>
+            )}
 
-          {dust !== null && (
-            <span className="wallet-badge">
-              <Zap size={10} style={{ verticalAlign: 'middle', marginRight: 3 }} />
-              {dust} DUST
-            </span>
-          )}
+            {dust !== null && (
+              <span className="balance-pill">
+                <Zap size={10} style={{ verticalAlign: 'middle', marginRight: 3 }} />
+                {dust} DUST
+              </span>
+            )}
+          </div>
 
           <button
             className="btn btn-danger btn-sm"
@@ -91,6 +93,7 @@ export function WalletConnect({
               {isWalletInstalled ? 'Click to connect your Midnight wallet' : 'Required for proof generation'}
             </span>
           )}
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 4, maxWidth: 340 }}>Zero-knowledge proofs generated locally. Your private inputs never leave your device.</p>
         </div>
       )}
     </div>

@@ -1,4 +1,5 @@
 import './App.css';
+import { ShieldCheck } from 'lucide-react';
 import { useMidnight } from './hooks/useMidnight';
 import { WalletConnect } from './components/WalletConnect';
 import { CircuitCall } from './components/CircuitCall';
@@ -10,8 +11,8 @@ export default function App() {
     <div className="app">
       <header className="header">
         <span className="logo">
-          <span className="logo-icon">🔒</span>
-          Midnight Private Voting
+          <ShieldCheck size={18} strokeWidth={2} color="var(--accent)" />
+          midnight/zk
         </span>
         <nav>
           <ul className="nav-links">
@@ -38,12 +39,16 @@ export default function App() {
       </header>
 
       <main className="main">
-        <WalletConnect {...wallet} />
-        <CircuitCall walletAddress={wallet.address} />
+        <div style={{ animationDelay: '0.05s' }}>
+          <WalletConnect {...wallet} />
+        </div>
+        <div style={{ animationDelay: '0.15s', opacity: 0, animation: 'fadeInUp 0.35s 0.15s cubic-bezier(0.4,0,0.2,1) forwards' }}>
+          <CircuitCall walletAddress={wallet.address} />
+        </div>
       </main>
 
       <footer>
-        Built by <a href="https://github.com/Ansh-Sonkusare" target="_blank" rel="noopener noreferrer">Ansh Sonkusare</a> · Midnight Network · Zero-Knowledge Privacy
+        Built by <a href="https://github.com/Ansh-Sonkusare" target="_blank" rel="noopener noreferrer">Ansh Sonkusare</a> on the Midnight Network · <a href="https://midnight.network" target="_blank" rel="noopener noreferrer">midnight.network</a>
       </footer>
     </div>
   );

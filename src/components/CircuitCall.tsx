@@ -15,6 +15,7 @@ import {
   BarChart3,
   EyeOff,
   Star,
+  ShieldOff,
 } from 'lucide-react';
 
 const CONTRACT_ADDRESS = 'd2ef42d83b2b4aebffdfcac9570e96bf646ee2e313a585151ef051162b1c5de3';
@@ -101,26 +102,11 @@ function StatsPanel({ stats }: { stats: Stats }) {
     { icon: <Eye size={14} />, label: 'Revealed', value: stats.revealed },
   ];
   return (
-    <div style={{
-      display: 'flex',
-      gap: '0.5rem',
-    }}>
+    <div className="voter-stats">
       {items.map(({ icon, label, value }) => (
-        <div key={label} style={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '0.2rem',
-          background: 'rgba(0,0,0,0.2)',
-          border: '1px solid var(--border)',
-          borderRadius: '8px',
-          padding: '0.6rem 0.75rem',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--text-muted)' }}>
-            {icon}
-            <span style={{ fontSize: '0.7rem' }}>{label}</span>
-          </div>
-          <span style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text)' }}>{value}</span>
+        <div key={label} className="stat-pill">
+          <div className="stat-icon">{icon}{label}</div>
+          <div className="stat-value">{value}</div>
         </div>
       ))}
     </div>
@@ -139,18 +125,7 @@ function TxHashRow({ hash }: { hash: string }) {
   }
 
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: '0.5rem',
-      background: 'rgba(0,0,0,0.25)',
-      border: '1px solid var(--border)',
-      borderRadius: '6px',
-      padding: '0.45rem 0.75rem',
-      fontSize: '0.75rem',
-      fontFamily: 'monospace',
-      color: 'var(--text-muted)',
-    }}>
+    <div className="tx-hash">
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {truncate(hash, 16, 12)}
       </span>
@@ -166,7 +141,7 @@ function TxHashRow({ hash }: { hash: string }) {
         target="_blank"
         rel="noopener noreferrer"
         title="View on Explorer"
-        style={{ color: 'var(--accent)', display: 'flex', alignItems: 'center' }}
+        className="explorer-link"
       >
         <ExternalLink size={13} />
       </a>
@@ -197,7 +172,10 @@ export function CircuitCall({ walletAddress }: Props) {
   if (!walletAddress) {
     return (
       <div className="card">
-        <p className="connect-prompt">Connect wallet to continue.</p>
+        <div style={{ textAlign: 'center', padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+          <ShieldOff size={32} color="var(--text-muted)" strokeWidth={1.5} />
+          <p className="connect-prompt">Connect your 1am wallet to participate</p>
+        </div>
       </div>
     );
   }
@@ -272,7 +250,7 @@ export function CircuitCall({ walletAddress }: Props) {
       <hr className="divider" />
 
       {/* Poll header */}
-      <div className="poll-info">
+      <div className="poll-info" style={{ animationDelay: '0.1s' }}>
         <div className="poll-title">Midnight Private Ratings Poll</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           <FileCode size={13} color="var(--text-muted)" />
@@ -329,17 +307,7 @@ export function CircuitCall({ walletAddress }: Props) {
           <>
             <StarRating value={selectedRating} onChange={setSelectedRating} disabled={false} />
             {selectedRating > 0 && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                fontSize: '0.8rem',
-                color: 'var(--text-muted)',
-                background: 'rgba(124,58,237,0.07)',
-                border: '1px solid rgba(124,58,237,0.15)',
-                borderRadius: '6px',
-                padding: '0.4rem 0.7rem',
-              }}>
+              <div className="rating-preview">
                 <EyeOff size={13} color="var(--accent)" />
                 You will commit rating <strong style={{ color: 'var(--text)' }}>{selectedRating}/5</strong> privately
               </div>
@@ -444,7 +412,7 @@ function StarRating({ value, onChange, disabled }: StarRatingProps) {
         >
           <Star
             size={22}
-            fill={display >= n ? '#f59e0b' : 'none'}
+            fill={display >= n ? 'currentColor' : 'none'}
             color={display >= n ? '#f59e0b' : 'var(--border)'}
             strokeWidth={1.5}
           />
