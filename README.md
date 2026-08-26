@@ -1,12 +1,12 @@
 # Midnight Private Voting
 
-[![CI](https://github.com/Ansh-Sonkusare/midnight/actions/workflows/ci.yml/badge.svg)](https://github.com/Ansh-Sonkusare/midnight/actions/workflows/ci.yml)
+[![CI](https://github.com/Ansh-Sonkusare/zk-ballot/actions/workflows/ci.yml/badge.svg)](https://github.com/Ansh-Sonkusare/zk-ballot/actions/workflows/ci.yml)
 
 > A privacy-preserving voting smart contract on the Midnight network where registered voters rate a poll from 1 to 5 in secret. Ratings are committed as hidden hashes, votes are tallied in zero-knowledge, and the per-rating tally (and winner) is only revealed after the poll closes.
 
 ## Live Demo
 
-**[midnight-private-voting.vercel.app](https://midnight-private-voting.vercel.app)**
+**[midnight-khaki.vercel.app](https://midnight-khaki.vercel.app)**
 
 ## Contract Address
 

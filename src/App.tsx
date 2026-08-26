@@ -17,7 +17,7 @@ export default function App() {
           <ul className="nav-links">
             <li>
               <a
-                href="https://github.com/Ansh-Sonkusare/midnight"
+                href="https://github.com/Ansh-Sonkusare/zk-ballot"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -43,7 +43,7 @@ export default function App() {
       </main>
 
       <footer>
-        Built on Midnight Network · Zero-Knowledge Privacy
+        Built by <a href="https://github.com/Ansh-Sonkusare" target="_blank" rel="noopener noreferrer">Ansh Sonkusare</a> · Midnight Network · Zero-Knowledge Privacy
       </footer>
     </div>
   );
