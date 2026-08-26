@@ -4,7 +4,7 @@ import { WalletConnect } from './components/WalletConnect';
 import { CircuitCall } from './components/CircuitCall';
 
 export default function App() {
-  const { address } = useMidnight();
+  const wallet = useMidnight();
 
   return (
     <div className="app">
@@ -38,8 +38,8 @@ export default function App() {
       </header>
 
       <main className="main">
-        <WalletConnect />
-        <CircuitCall walletAddress={address} />
+        <WalletConnect {...wallet} />
+        <CircuitCall walletAddress={wallet.address} />
       </main>
 
       <footer>

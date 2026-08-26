@@ -1,49 +1,95 @@
-import { useMidnight } from '../hooks/useMidnight';
+import { Wallet, Circle, Lock, Zap, LogOut, Radio, ExternalLink } from 'lucide-react';
+import type { UseMidnightReturn } from '../hooks/useMidnight';
 
 function truncateAddress(addr: string): string {
   return `${addr.slice(0, 12)}...${addr.slice(-8)}`;
 }
 
-export function WalletConnect() {
-  const { address, networkError, error, isConnecting, connect, disconnect } = useMidnight();
+function formatTNight(raw: bigint): string {
+  const whole = raw / 1_000_000n;
+  const frac = raw % 1_000_000n;
+  if (frac === 0n) return whole.toString();
+  return `${whole}.${frac.toString().padStart(6, '0').replace(/0+$/, '')}`;
+}
 
+export function WalletConnect({
+  address,
+  networkError,
+  error,
+  isConnecting,
+  isWalletInstalled,
+  tNight,
+  dust,
+  connect,
+  disconnect,
+}: UseMidnightReturn) {
   const notFound = error?.includes('not found');
 
   return (
     <div className="card wallet-section">
       {networkError && <div className="wallet-alert">{networkError}</div>}
-
       {error && !notFound && <p className="error-msg">{error}</p>}
 
       {address ? (
         <div className="wallet-connected">
-          <span className="wallet-dot" />
+          <Circle size={8} fill="var(--success)" color="var(--success)" />
           <span className="wallet-address">{truncateAddress(address)}</span>
-          <span className="wallet-badge">Preprod</span>
-          <button className="btn btn-danger btn-sm" onClick={disconnect}>
-            Disconnect
+
+          <span className="wallet-badge">
+            <Radio size={10} style={{ verticalAlign: 'middle', marginRight: 3 }} />
+            Preview
+          </span>
+
+          {tNight !== null && (
+            <span className="wallet-badge">
+              <Lock size={10} style={{ verticalAlign: 'middle', marginRight: 3 }} />
+              {formatTNight(tNight)} tNIGHT
+            </span>
+          )}
+
+          {dust !== null && (
+            <span className="wallet-badge">
+              <Zap size={10} style={{ verticalAlign: 'middle', marginRight: 3 }} />
+              {dust} DUST
+            </span>
+          )}
+
+          <button
+            className="btn btn-danger btn-sm"
+            onClick={disconnect}
+            title="Disconnect"
+            aria-label="Disconnect wallet"
+          >
+            <LogOut size={14} />
           </button>
         </div>
       ) : isConnecting ? (
         <div className="loading">
           <span className="spinner" />
-          Connecting to Lace...
+          Connecting to 1am...
         </div>
       ) : (
         <div className="wallet-disconnected">
           <button className="btn btn-primary" onClick={connect}>
-            Connect Lace Wallet
+            <Wallet size={16} />
+            Connect 1am Wallet
           </button>
           {notFound ? (
             <span className="wallet-hint">
-              Lace not detected —{' '}
-              <a href="https://www.lace.io/" target="_blank" rel="noopener noreferrer">
-                install Lace
-              </a>{' '}
-              or try again after it loads
+              1am not detected —{' '}
+              <a
+                href="https://1am.finance/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="install-link"
+              >
+                install 1am <ExternalLink size={11} style={{ verticalAlign: 'middle' }} />
+              </a>
             </span>
           ) : (
-            <span className="wallet-hint">Required for proof generation</span>
+            <span className="wallet-hint">
+              {isWalletInstalled ? 'Click to connect your Midnight wallet' : 'Required for proof generation'}
+            </span>
           )}
         </div>
       )}

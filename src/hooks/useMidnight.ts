@@ -1,43 +1,49 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-interface LaceState {
-  address: string;
+// ─── 1am wallet types (from window.midnight['1am']) ───────────────────────────
+
+interface OneAMConfig {
   networkId: string;
+  indexerUri: string;
+  proverServerUri: string;
 }
 
-interface LaceAPI {
-  state(): Promise<LaceState>;
+interface OneAMConnectedAPI {
+  getConfiguration(): Promise<OneAMConfig>;
+  getUnshieldedAddress(): Promise<{ unshieldedAddress: string }>;
+  getUnshieldedBalances(): Promise<Record<string, bigint>>;
+  getDustBalance(): Promise<{ balance: string; cap: string }>;
 }
 
-interface MnLace {
-  apiVersion: string;
+interface OneAMInitialAPI {
   name: string;
-  rdns?: string;
-  enable(): Promise<LaceAPI>;
-  isEnabled(): Promise<boolean>;
+  apiVersion: string;
+  connect(networkId: string): Promise<OneAMConnectedAPI>;
 }
 
 declare global {
   interface Window {
-    midnight?: Record<string, MnLace>;
+    midnight?: Record<string, unknown>;
   }
 }
 
-function findLace(): MnLace | null {
-  const midnight = window.midnight;
-  if (!midnight) return null;
-  // Legacy: window.midnight.mnLace
-  if ('mnLace' in midnight) return midnight.mnLace;
-  // New (4.x): UUID key with rdns 'io.lace.wallet' or name 'lace'
-  return Object.values(midnight).find(v => v?.rdns === 'io.lace.wallet' || v?.name === 'lace') ?? null;
+const NETWORK = 'preview';
+
+function find1am(): OneAMInitialAPI | null {
+  const w = window.midnight?.['1am'] as OneAMInitialAPI | undefined;
+  return w ?? null;
 }
 
-interface UseMidnightReturn {
+// ─── Hook ─────────────────────────────────────────────────────────────────────
+
+export interface UseMidnightReturn {
   address: string | null;
   networkError: string | null;
   error: string | null;
   isConnecting: boolean;
-  isLaceInstalled: boolean;
+  isWalletInstalled: boolean;
+  tNight: bigint | null;
+  dust: string | null;
   connect(): Promise<void>;
   disconnect(): void;
 }
@@ -47,13 +53,15 @@ export function useMidnight(): UseMidnightReturn {
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [isLaceInstalled, setIsLaceInstalled] = useState(Boolean(findLace()));
-  const apiRef = useRef<LaceAPI | null>(null);
+  const [isWalletInstalled, setIsWalletInstalled] = useState(Boolean(find1am()));
+  const [tNight, setTNight] = useState<bigint | null>(null);
+  const [dust, setDust] = useState<string | null>(null);
+  const apiRef = useRef<OneAMConnectedAPI | null>(null);
 
   const connect = useCallback(async () => {
-    const lace = findLace();
-    if (!lace) {
-      setError('Lace wallet not found. Please install the Lace browser extension.');
+    const wallet = find1am();
+    if (!wallet) {
+      setError('1am wallet not found. Install the 1am browser extension.');
       return;
     }
 
@@ -62,15 +70,22 @@ export function useMidnight(): UseMidnightReturn {
     setNetworkError(null);
 
     try {
-      const api = await lace.enable();
+      const api = await wallet.connect(NETWORK);
       apiRef.current = api;
-      const state = await api.state();
-      if (state.networkId !== 'preprod') {
-        setNetworkError(`Connected to "${state.networkId}" — please switch Lace to Preprod network.`);
+      const [config, { unshieldedAddress }, balances, dustBal] = await Promise.all([
+        api.getConfiguration(),
+        api.getUnshieldedAddress(),
+        api.getUnshieldedBalances(),
+        api.getDustBalance(),
+      ]);
+      if (config.networkId !== NETWORK) {
+        setNetworkError(`Connected to "${config.networkId}" — please switch to ${NETWORK} in 1am.`);
       }
-      setAddress(state.address);
+      setAddress(unshieldedAddress);
+      setTNight(balances['tNIGHT'] ?? null);
+      setDust(dustBal.balance);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to connect to Lace wallet.');
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setIsConnecting(false);
     }
@@ -81,31 +96,24 @@ export function useMidnight(): UseMidnightReturn {
     setAddress(null);
     setNetworkError(null);
     setError(null);
+    setTNight(null);
+    setDust(null);
   }, []);
 
-  // Extensions inject asynchronously; poll until Lace appears or timeout.
+  // Poll for wallet injection (extensions inject asynchronously)
   useEffect(() => {
-    if (findLace()) return;
+    if (find1am()) return;
     let attempts = 0;
     const id = setInterval(() => {
-      if (findLace()) {
-        setIsLaceInstalled(true);
+      if (find1am()) {
+        setIsWalletInstalled(true);
         clearInterval(id);
-      } else if (++attempts >= 20) {
+      } else if (++attempts >= 40) {
         clearInterval(id);
       }
     }, 250);
     return () => clearInterval(id);
   }, []);
 
-  // Auto-reconnect if already enabled
-  useEffect(() => {
-    const lace = findLace();
-    if (!lace) return;
-    lace.isEnabled().then((enabled) => {
-      if (enabled) connect();
-    }).catch(() => {});
-  }, [isLaceInstalled]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  return { address, networkError, error, isConnecting, isLaceInstalled, connect, disconnect };
+  return { address, networkError, error, isConnecting, isWalletInstalled, tNight, dust, connect, disconnect };
 }
