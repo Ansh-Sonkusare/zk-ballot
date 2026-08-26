@@ -21,6 +21,7 @@ jobs:
             https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           export PATH="$HOME/.local/bin:$PATH"
+          compact update 0.31.1
           compact --version
 
       - name: Install dependencies
