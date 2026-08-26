@@ -12,7 +12,7 @@
 
 | Network  | Address                          |
 |----------|----------------------------------|
-| Preview  | `c89921b6fd8d84376298e274021ef64c497db4fa66fcac16019b81b10c00dd14` |
+| Preview  | `d2ef42d83b2b4aebffdfcac9570e96bf646ee2e313a585151ef051162b1c5de3` |
 | Preprod  | [not deployed]                   |
 
 ## What This Does
