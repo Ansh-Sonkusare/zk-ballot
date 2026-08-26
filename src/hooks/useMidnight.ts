@@ -12,14 +12,24 @@ interface LaceAPI {
 interface MnLace {
   apiVersion: string;
   name: string;
+  rdns?: string;
   enable(): Promise<LaceAPI>;
   isEnabled(): Promise<boolean>;
 }
 
 declare global {
   interface Window {
-    midnight?: { mnLace?: MnLace };
+    midnight?: Record<string, MnLace>;
   }
+}
+
+function findLace(): MnLace | null {
+  const midnight = window.midnight;
+  if (!midnight) return null;
+  // Legacy: window.midnight.mnLace
+  if ('mnLace' in midnight) return midnight.mnLace;
+  // New (4.x): UUID key with rdns 'io.lace.wallet' or name 'lace'
+  return Object.values(midnight).find(v => v?.rdns === 'io.lace.wallet' || v?.name === 'lace') ?? null;
 }
 
 interface UseMidnightReturn {
@@ -37,11 +47,11 @@ export function useMidnight(): UseMidnightReturn {
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [isLaceInstalled, setIsLaceInstalled] = useState(Boolean(window.midnight?.mnLace));
+  const [isLaceInstalled, setIsLaceInstalled] = useState(Boolean(findLace()));
   const apiRef = useRef<LaceAPI | null>(null);
 
   const connect = useCallback(async () => {
-    const lace = window.midnight?.mnLace;
+    const lace = findLace();
     if (!lace) {
       setError('Lace wallet not found. Please install the Lace browser extension.');
       return;
@@ -73,12 +83,12 @@ export function useMidnight(): UseMidnightReturn {
     setError(null);
   }, []);
 
-  // Extensions inject into window asynchronously; poll until Lace appears or timeout.
+  // Extensions inject asynchronously; poll until Lace appears or timeout.
   useEffect(() => {
-    if (window.midnight?.mnLace) return;
+    if (findLace()) return;
     let attempts = 0;
     const id = setInterval(() => {
-      if (window.midnight?.mnLace) {
+      if (findLace()) {
         setIsLaceInstalled(true);
         clearInterval(id);
       } else if (++attempts >= 20) {
@@ -90,14 +100,11 @@ export function useMidnight(): UseMidnightReturn {
 
   // Auto-reconnect if already enabled
   useEffect(() => {
-    const lace = window.midnight?.mnLace;
+    const lace = findLace();
     if (!lace) return;
-
     lace.isEnabled().then((enabled) => {
       if (enabled) connect();
-    }).catch(() => {
-      // silently ignore — wallet may not be ready yet
-    });
+    }).catch(() => {});
   }, [isLaceInstalled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { address, networkError, error, isConnecting, isLaceInstalled, connect, disconnect };
