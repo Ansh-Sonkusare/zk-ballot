@@ -21,3 +21,5 @@ dist/
 # Local env overrides
 .env
 .env.*
+.vercel
+.env*
